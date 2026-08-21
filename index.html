@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>设备指纹/生物识别解锁 Demo</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f7f6;
+            margin: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            color: #333;
+        }
+        .card {
+            background: #ffffff;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+            width: 380px;
+            text-align: center;
+        }
+        h2 { margin-top: 0; color: #2c3e50; }
+        p { font-size: 14px; color: #666; margin-bottom: 24px; }
+        button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            font-size: 16px;
+            border-radius: 6px;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.3s;
+            margin-bottom: 12px;
+        }
+        button:hover { background-color: #2980b9; }
+        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
+        #status {
+            margin-top: 16px;
+            font-size: 13px;
+            padding: 10px;
+            border-radius: 4px;
+            word-break: break-all;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #e2e3e5; color: #383d41; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>生物识别解锁</h2>
+    <p>请选择注册指纹凭证，或通过指纹进行身份验证解锁。</p>
+    
+    <button id="registerBtn" onclick="registerCredential()">1. 注册设备指纹</button>
+    <button id="authBtn" onclick="authenticate()" disabled>2. 验证指纹解锁</button>
+    
+    <div id="status" class="info">状态：等待操作...</div>
+</div>
+
+<script>
+    if (!window.PublicKeyCredential) {
+        alert("您的浏览器不支持 WebAuthentication API (WebAuthn)，请更换现代浏览器。");
+    }
+
+    const statusDiv = document.getElementById("status");
+    const authBtn = document.getElementById("authBtn");
+
+    function showStatus(text, type) {
+        statusDiv.textContent = text;
+        statusDiv.className = type;
+    }
+
+    function bufferToBase64(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = "";
+        for (let i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+        }
+        return window.btoa(binary);
+    }
+
+    async function registerCredential() {
+        try {
+            showStatus("正在请求注册，请根据提示使用指纹/面容...", "info");
+
+            const challenge = new Uint8Array(32);
+            window.crypto.getRandomValues(challenge);
+            const userId = new Uint8Array(16);
+            window.crypto.getRandomValues(userId);
+
+            const publicKeyCredentialCreationOptions = {
+                challenge: challenge,
+                rp: {
+                    name: "本地生物识别演示",
+                    id: window.location.hostname,
+                },
+                user: {
+                    id: userId,
+                    name: "demo_user@example.com",
+                    displayName: "演示用户",
+                },
+                pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
+                authenticatorSelection: {
+                    authenticatorAttachment: "platform",
+                    userVerification: "required",
+                },
+                timeout: 60000,
+                attestation: "none"
+            };
+
+            const credential = await navigator.credentials.create({
+                publicKey: publicKeyCredentialCreationOptions
+            });
+
+            const credIdBase64 = bufferToBase64(credential.rawId);
+            localStorage.setItem("savedCredentialId", credIdBase64);
+
+            showStatus("注册成功！现在可以点击下方按钮进行指纹解锁。", "success");
+            authBtn.disabled = false;
+
+        } catch (error) {
+            console.error(error);
+            showStatus("注册失败: " + error.message, "error");
+        }
+    }
+
+    async function authenticate() {
+        try {
+            const savedCredIdBase64 = localStorage.getItem("savedCredentialId");
+            if (!savedCredIdBase64) {
+                showStatus("请先完成第1步注册指纹！", "error");
+                return;
+            }
+
+            showStatus("正在请求指纹验证，请扫描指纹...", "info");
+
+            const binaryString = window.atob(savedCredIdBase64);
+            const credIdBytes = new Uint8Array(binaryString.length);
+            for (let i = 0; i < binaryString.length; i++) {
+                credIdBytes[i] = binaryString.charCodeAt(i);
+            }
+
+            const challenge = new Uint8Array(32);
+            window.crypto.getRandomValues(challenge);
+
+            const publicKeyCredentialRequestOptions = {
+                challenge: challenge,
+                allowCredentials: [{
+                    id: credIdBytes,
+                    type: "public-key",
+                    transports: ["internal"],
+                }],
+                userVerification: "required",
+            };
+
+            const assertion = await navigator.credentials.get({
+                publicKey: publicKeyCredentialRequestOptions
+            });
+
+            if (assertion) {
+                showStatus("解锁成功！欢迎回来，身份验证已通过。", "success");
+            }
+        } catch (error) {
+            console.error(error);
+            showStatus("验证解锁失败: " + error.message, "error");
+        }
+    }
+</script>
+
+</body>
+</html>
