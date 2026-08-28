@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebXR AR Experience</title>
+    <title>WebXR AR 射击</title>
     <style>
         :root {--primary-color: #2c3e50;--accent-color: #3498db;--text-color: #ffffff;}
         body {margin: 0;padding: 0;overflow: hidden;background-color: #000000;font-family: sans-serif;color: var(--text-color);user-select: none;}
@@ -19,7 +19,7 @@
 <body>
     <div id="ui-container">
         <div id="hud-panel" class="hud-panel">
-            <h1>WebXR AR 射击</h1>
+            <h1>WebXR AR game</h1>
             <p id="instruction">请在 Meta Quest 浏览器中启动 AR 体验</p>
             <button id="xr-start-button" class="xr-button">启动 AR 体验</button>
         </div>
@@ -27,8 +27,7 @@
     </div>
     <script src="./three.js/r128/three.min.js"></script>
     <script>
-        const AppState = { scene: null, camera: null, renderer: null, targets: [], bullets: [], controllers: [], score: 0, scoreMesh: null, warningMesh: null };
-        const Config = { sphereRadius: 0.08, colors: [0x3498db, 0xe74c3c, 0x2ecc71] };
+        const AppState = { scene: null, camera: null, renderer: null, targets: [], bullets: [], controllers: [], score: 0, scoreMesh: null, warningMesh: null, boundaryMesh: null };
         initApplication();
         function initApplication() {
             AppState.statusElement = document.getElementById('status-bar');
@@ -53,20 +52,25 @@
             AppState.scene.add(directionalLight);
         }
         function createEnvironment() {
-            const geometry = new THREE.SphereGeometry(Config.sphereRadius, 32, 32);
+            const geometry = new THREE.BoxGeometry(0.2, 0.2, 0.04);
+            const colors = [0x3498db, 0xe74c3c, 0x2ecc71];
             for (let i = 0; i < 3; i++) {
-                const material = new THREE.MeshStandardMaterial({ color: Config.colors[i], roughness: 0.2, metalness: 0.3 });
+                const material = new THREE.MeshStandardMaterial({ color: colors[i], roughness: 0.2, metalness: 0.3 });
                 const mesh = new THREE.Mesh(geometry, material);
-                mesh.position.set((i - 1) * 0.4, 1.2, -1.2);
+                mesh.position.set((i - 1) * 0.6, 1.4, -2.5);
                 AppState.scene.add(mesh);
                 AppState.targets.push(mesh);
             }
             AppState.warningMesh = createTextSprite("请拿起手柄");
-            AppState.warningMesh.position.set(0, 1.6, -1.0);
+            AppState.warningMesh.position.set(0, 1.8, -1.5);
             AppState.warningMesh.visible = false;
             AppState.scene.add(AppState.warningMesh);
+            AppState.boundaryMesh = createTextSprite("请回到安全边界内");
+            AppState.boundaryMesh.position.set(0, 2.1, -1.5);
+            AppState.boundaryMesh.visible = false;
+            AppState.scene.add(AppState.boundaryMesh);
             AppState.scoreMesh = createTextSprite("得分: 0");
-            AppState.scoreMesh.position.set(0, 2.0, -1.2);
+            AppState.scoreMesh.position.set(0, 2.4, -2.0);
             AppState.scene.add(AppState.scoreMesh);
         }
         function createTextSprite(message) {
@@ -75,7 +79,7 @@
             canvas.width = 512; canvas.height = 128;
             context.fillStyle = 'rgba(0, 0, 0, 0.6)';
             context.fillRect(0, 0, canvas.width, canvas.height);
-            context.font = 'Bold 48px sans-serif';
+            context.font = 'Bold 44px sans-serif';
             context.fillStyle = 'white';
             context.textAlign = 'center';
             context.textBaseline = 'middle';
@@ -83,7 +87,7 @@
             const texture = new THREE.CanvasTexture(canvas);
             const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
             const sprite = new THREE.Sprite(material);
-            sprite.scale.set(0.6, 0.15, 1);
+            sprite.scale.set(0.7, 0.18, 1);
             return sprite;
         }
         function updateScoreTexture() {
@@ -92,7 +96,7 @@
             context.clearRect(0, 0, canvas.width, canvas.height);
             context.fillStyle = 'rgba(0, 0, 0, 0.6)';
             context.fillRect(0, 0, canvas.width, canvas.height);
-            context.font = 'Bold 48px sans-serif';
+            context.font = 'Bold 44px sans-serif';
             context.fillStyle = 'white';
             context.textAlign = 'center';
             context.textBaseline = 'middle';
@@ -105,8 +109,15 @@
                 controller.addEventListener('selectstart', onControllerSelectStart);
                 AppState.scene.add(controller);
                 AppState.controllers.push(controller);
-                const marker = new THREE.Mesh(new THREE.SphereGeometry(0.015, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffffff }));
-                controller.add(marker);
+                const gripGroup = new THREE.Group();
+                const handleMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.12, 16), new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.8, roughness: 0.2 }));
+                handleMesh.rotation.x = Math.PI / 2;
+                handleMesh.position.z = 0.04;
+                const ringMesh = new THREE.Mesh(new THREE.TorusGeometry(0.03, 0.005, 16, 32), new THREE.MeshStandardMaterial({ color: 0x3498db, emissive: 0x112244 }));
+                ringMesh.position.z = -0.02;
+                gripGroup.add(handleMesh);
+                gripGroup.add(ringMesh);
+                controller.add(gripGroup);
             }
         }
         function setupXRSessionUI() {
@@ -124,7 +135,7 @@
             }
         }
         function requestARSession() {
-            const sessionInit = { requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking', 'passthrough', 'hit-test'] };
+            const sessionInit = { requiredFeatures: ['local-floor', 'bounded-floor'], optionalFeatures: ['hand-tracking', 'passthrough', 'hit-test'] };
             navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
         }
         function onSessionStarted(session) {
@@ -137,11 +148,13 @@
             const bulletGeo = new THREE.SphereGeometry(0.02, 16, 16);
             const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
             const bullet = new THREE.Mesh(bulletGeo, bulletMat);
-            bullet.position.copy(controller.position);
+            const worldPos = new THREE.Vector3();
+            controller.getWorldPosition(worldPos);
+            bullet.position.copy(worldPos);
             const quaternion = new THREE.Quaternion();
             controller.getWorldQuaternion(quaternion);
             const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
-            bullet.userData = { velocity: direction.multiplyScalar(5.0) };
+            bullet.userData = { velocity: direction.multiplyScalar(8.0), life: 3.0 };
             AppState.scene.add(bullet);
             AppState.bullets.push(bullet);
         }
@@ -151,29 +164,52 @@
             AppState.renderer.setSize(window.innerWidth, window.innerHeight);
         }
         const clock = new THREE.Clock();
-        AppState.renderer.setAnimationLoop(() => {
+        AppState.renderer.setAnimationLoop((timestamp, frame) => {
             const delta = clock.getDelta();
-            let controllersConnected = false;
+            let hasActiveController = false;
             AppState.controllers.forEach(controller => {
-                const inputSource = controller.userData.inputSource;
-                if (controller.visible || controller.children.length > 0) { controllersConnected = true; }
+                if (controller.visible && controller.matrixWorld.elements[12] !== 0) {
+                    hasActiveController = true;
+                }
             });
             if (AppState.warningMesh) {
-                AppState.warningMesh.visible = !controllersConnected && AppState.renderer.xr.isPresenting;
+                AppState.warningMesh.visible = !hasActiveController && AppState.renderer.xr.isPresenting;
+            }
+            if (AppState.boundaryMesh && frame) {
+                let outOfBounds = false;
+                try {
+                    const referenceSpace = AppState.renderer.xr.getReferenceSpace();
+                    const viewerPose = frame.getViewerPose(referenceSpace);
+                    if (viewerPose && viewerPose.views) {
+                        const camPos = AppState.camera.position;
+                        if (Math.abs(camPos.x) > 2.0 || Math.abs(camPos.z) > 2.0) { outOfBounds = true; }
+                    }
+                } catch (e) {}
+                AppState.boundaryMesh.visible = outOfBounds && AppState.renderer.xr.isPresenting;
             }
             for (let i = AppState.bullets.length - 1; i >= 0; i--) {
                 const bullet = AppState.bullets[i];
                 bullet.position.addScaledVector(bullet.userData.velocity, delta);
+                bullet.userData.life -= delta;
+                if (bullet.userData.life <= 0) {
+                    AppState.scene.remove(bullet);
+                    AppState.bullets.splice(i, 1);
+                    continue;
+                }
+                let hit = false;
                 for (let j = 0; j < AppState.targets.length; j++) {
                     const target = AppState.targets[j];
-                    if (bullet.position.distanceTo(target.position) < Config.sphereRadius + 0.02) {
+                    if (bullet.position.distanceTo(target.position) < 0.15) {
                         AppState.score += 10;
                         updateScoreTexture();
-                        target.position.set((Math.random() - 0.5) * 0.8, 1.0 + Math.random() * 0.5, -0.8 - Math.random() * 0.8);
-                        AppState.scene.remove(bullet);
-                        AppState.bullets.splice(i, 1);
+                        target.position.set((Math.random() - 0.5) * 1.2, 1.0 + Math.random() * 0.8, -2.0 - Math.random() * 1.5);
+                        hit = true;
                         break;
                     }
+                }
+                if (hit) {
+                    AppState.scene.remove(bullet);
+                    AppState.bullets.splice(i, 1);
                 }
             }
             AppState.renderer.render(AppState.scene, AppState.camera);
