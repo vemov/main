@@ -3,175 +3,211 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>设备指纹/生物识别解锁 Demo</title>
+    <title>WebXR Passthrough & Hand Interaction</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f4f7f6;
             margin: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            color: #333;
+            padding: 0;
+            overflow: hidden;
+            background-color: #000;
+            font-family: sans-serif;
         }
-        .card {
-            background: #ffffff;
-            padding: 30px;
-            border-radius: 12px;
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
-            width: 380px;
-            text-align: center;
+        #overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
         }
-        h2 { margin-top: 0; color: #2c3e50; }
-        p { font-size: 14px; color: #666; margin-bottom: 24px; }
         button {
-            background-color: #3498db;
+            padding: 12px 24px;
+            font-size: 16px;
+            background-color: #4CAF50;
             color: white;
             border: none;
-            padding: 12px 20px;
-            font-size: 16px;
-            border-radius: 6px;
+            border-radius: 8px;
             cursor: pointer;
-            width: 100%;
-            transition: background 0.3s;
-            margin-bottom: 12px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
         }
-        button:hover { background-color: #2980b9; }
-        button:disabled { background-color: #bdc3c7; cursor: not-allowed; }
-        #status {
-            margin-top: 16px;
-            font-size: 13px;
-            padding: 10px;
-            border-radius: 4px;
-            word-break: break-all;
+        button:hover {
+            background-color: #45a049;
         }
-        .success { background-color: #d4edda; color: #155724; }
-        .error { background-color: #f8d7da; color: #721c24; }
-        .info { background-color: #e2e3e5; color: #383d41; }
     </style>
 </head>
 <body>
 
-<div class="card">
-    <h2>生物识别解锁</h2>
-    <p>请选择注册指纹凭证，或通过指纹进行身份验证解锁。</p>
+    <div id="overlay">
+        <button id="ar-button">启动 WebXR AR 体验</button>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     
-    <button id="registerBtn" onclick="registerCredential()">1. 注册设备指纹</button>
-    <button id="authBtn" onclick="authenticate()" disabled>2. 验证指纹解锁</button>
-    
-    <div id="status" class="info">状态：等待操作...</div>
-</div>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRControllerModelFactory.js"></script>
 
-<script>
-    if (!window.PublicKeyCredential) {
-        alert("您的浏览器不支持 WebAuthentication API (WebAuthn)，请更换现代浏览器。");
-    }
+    <script>
+        let camera, scene, renderer;
+        let sphere, sphereOriginalPosition;
+        let controller1, controller2;
+        let hand1, hand2;
+        let grabbedObject = null; // 当前被抓取的物体
 
-    const statusDiv = document.getElementById("status");
-    const authBtn = document.getElementById("authBtn");
+        init();
 
-    function showStatus(text, type) {
-        statusDiv.textContent = text;
-        statusDiv.className = type;
-    }
+        function init() {
+            // 1. 创建场景
+            scene = new THREE.Scene();
 
-    function bufferToBase64(buffer) {
-        const bytes = new Uint8Array(buffer);
-        let binary = "";
-        for (let i = 0; i < bytes.byteLength; i++) {
-            binary += String.fromCharCode(bytes[i]);
+            // 2. 创建相机
+            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+
+            // 3. 创建渲染器 (必须启用 xr 和 alpha:true 以实现透视背景)
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.xr.enabled = true; // 开启 WebXR 支持
+            document.body.appendChild(renderer.domElement);
+
+            // 4. 添加光源
+            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            directionalLight.position.set(0, 5, 2);
+            scene.add(directionalLight);
+
+            // 5. 创建一个可交互的球体 (放在正前方 1 米处)
+            const geometry = new THREE.SphereGeometry(0.1, 32, 32); // 半径 10 厘米
+            const material = new THREE.MeshStandardMaterial({ 
+                color: 0xff3333, 
+                roughness: 0.3,
+                metalness: 0.1 
+            });
+            sphere = new THREE.Mesh(geometry, material);
+            sphere.position.set(0, 1.2, -0.8); // 眼睛前方、略微偏下
+            scene.add(sphere);
+            
+            // 记录初始位置，方便后续重置或计算
+            sphereOriginalPosition = sphere.position.clone();
+
+            // 6. 设置 WebXR 控制器与手部追踪
+            setupControllers();
+
+            // 7. AR 按钮逻辑
+            const arButton = document.getElementById('ar-button');
+            if ('xr' in navigator) {
+                navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+                    if (supported) {
+                        arButton.addEventListener('click', on激发ARSession);
+                    } else {
+                        arButton.textContent = '当前设备不支持 Immersive AR';
+                        arButton.disabled = true;
+                    }
+                });
+            } else {
+                arButton.textContent = '浏览器不支持 WebXR';
+                arButton.disabled = true;
+            }
+
+            window.addEventListener('resize', onWindowResize);
         }
-        return window.btoa(binary);
-    }
 
-    async function registerCredential() {
-        try {
-            showStatus("正在请求注册，请根据提示使用指纹/面容...", "info");
-
-            const challenge = new Uint8Array(32);
-            window.crypto.getRandomValues(challenge);
-            const userId = new Uint8Array(16);
-            window.crypto.getRandomValues(userId);
-
-            const publicKeyCredentialCreationOptions = {
-                challenge: challenge,
-                rp: {
-                    name: "本地生物识别演示",
-                    id: window.location.hostname,
-                },
-                user: {
-                    id: userId,
-                    name: "demo_user@example.com",
-                    displayName: "演示用户",
-                },
-                pubKeyCredParams: [{ alg: -7, type: "public-key" }, { alg: -257, type: "public-key" }],
-                authenticatorSelection: {
-                    authenticatorAttachment: "platform",
-                    userVerification: "required",
-                },
-                timeout: 60000,
-                attestation: "none"
+        function on激发ARSession() {
+            // 请求 AR 会话，启用环境光估计和手部输入
+            const sessionInit = {
+                requiredFeatures: ['hit-test', 'local-floor'],
+                optionalFeatures: ['hand-tracking', 'passthrough', 'layers']
             };
 
-            const credential = await navigator.credentials.create({
-                publicKey: publicKeyCredentialCreationOptions
+            navigator.xr.requestSession('immersive-ar', sessionInit).then((session) => {
+                renderer.xr.setSession(session);
+                document.getElementById('overlay').style.display = 'none'; // 隐藏进入按钮
+
+                session.addEventListener('end', () => {
+                    document.getElementById('overlay').style.display = 'block';
+                });
             });
-
-            const credIdBase64 = bufferToBase64(credential.rawId);
-            localStorage.setItem("savedCredentialId", credIdBase64);
-
-            showStatus("注册成功！现在可以点击下方按钮进行指纹解锁。", "success");
-            authBtn.disabled = false;
-
-        } catch (error) {
-            console.error(error);
-            showStatus("注册失败: " + error.message, "error");
         }
-    }
 
-    async function authenticate() {
-        try {
-            const savedCredIdBase64 = localStorage.getItem("savedCredentialId");
-            if (!savedCredIdBase64) {
-                showStatus("请先完成第1步注册指纹！", "error");
-                return;
-            }
+        function setupControllers() {
+            // 控制器 1 (右手柄 / 右手)
+            controller1 = renderer.xr.getController(0);
+            controller1.addEventListener('selectstart', onSelectStart);
+            controller1.addEventListener('selectend', onSelectEnd);
+            scene.add(controller1);
 
-            showStatus("正在请求指纹验证，请扫描指纹...", "info");
+            // 控制器 2 (左手柄 / 左手)
+            controller2 = renderer.xr.getController(1);
+            controller2.addEventListener('selectstart', onSelectStart);
+            controller2.addEventListener('selectend', onSelectEnd);
+            scene.add(controller2);
 
-            const binaryString = window.atob(savedCredIdBase64);
-            const credIdBytes = new Uint8Array(binaryString.length);
-            for (let i = 0; i < binaryString.length; i++) {
-                credIdBytes[i] = binaryString.charCodeAt(i);
-            }
+            // 手部追踪支持 (Meta Quest Hand Tracking)
+            hand1 = renderer.xr.getHand(0);
+            hand1.addEventListener('pinchstart', onPinchStart);
+            hand1.addEventListener('pinchend', onPinchEnd);
+            scene.add(hand1);
 
-            const challenge = new Uint8Array(32);
-            window.crypto.getRandomValues(challenge);
-
-            const publicKeyCredentialRequestOptions = {
-                challenge: challenge,
-                allowCredentials: [{
-                    id: credIdBytes,
-                    type: "public-key",
-                    transports: ["internal"],
-                }],
-                userVerification: "required",
-            };
-
-            const assertion = await navigator.credentials.get({
-                publicKey: publicKeyCredentialRequestOptions
-            });
-
-            if (assertion) {
-                showStatus("解锁成功！欢迎回来，身份验证已通过。", "success");
-            }
-        } catch (error) {
-            console.error(error);
-            showStatus("验证解锁失败: " + error.message, "error");
+            hand2 = renderer.xr.getHand(1);
+            hand2.addEventListener('pinchstart', onPinchStart);
+            hand2.addEventListener('pinchend', onPinchEnd);
+            scene.add(hand2);
         }
-    }
-</script>
 
+        // 手柄触发（按下扳机键）
+        function onSelectStart(event) {
+            const controller = event.target;
+            checkIntersectionAndGrab(controller);
+        }
+
+        // 手柄释放（松开扳机键）
+        function onSelectEnd(event) {
+            if (grabbedObject) {
+                // 如果当前物体被该控制器抓取，则释放
+                scene.attach(grabbedObject); // 放回世界场景
+                grabbedObject = null;
+            }
+        }
+
+        // 手部捏合开始（大拇指和食指捏合模拟抓取）
+        function onPinchStart(event) {
+            const hand = event.target;
+            // 获取食指尖端位置用于检测
+            const indexTip = hand.joints['index-finger-tip'];
+            if (indexTip) {
+                // 计算指尖与球体的距离
+                const distance = indexTip.position.distanceTo(sphere.position);
+                if (distance < 0.15 && !grabbedObject) {
+                    grabbedObject = sphere;
+                    hand.add(grabbedObject); // 将球体绑定到手上
+                }
+            }
+        }
+
+        // 手部捏合结束
+        function onPinchEnd(event) {
+            if (grabbedObject) {
+                scene.attach(grabbedObject);
+                grabbedObject = null;
+            }
+        }
+
+        // 简单的距离检测抓取逻辑（针对标准手柄激光或直接触碰）
+        function checkIntersectionAndGrab(source) {
+            const distance = source.position.distanceTo(sphere.position);
+            if (distance < 0.2 && !grabbedObject) {
+                grabbedObject = sphere;
+                source.add(grabbedObject); // 绑定到手柄上，实现拿起效果
+            }
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // 渲染循环
+        renderer.setAnimationLoop(() => {
+            renderer.render(scene, camera);
+        });
+    </script>
 </body>
 </html>
