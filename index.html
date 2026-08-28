@@ -1,202 +1,183 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WebXR AR game</title>
-<style>
-:root{--accent:#3498db;--text:#fff}
-body{margin:0;overflow:hidden;background:#000;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;color:var(--text);user-select:none;-webkit-user-select:none}
-#ui-container{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:space-between;align-items:center;pointer-events:none;box-sizing:border-box;padding:24px;z-index:100}
-.hud-panel{background:rgba(0,0,0,.65);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.15);border-radius:16px;padding:20px 32px;text-align:center;box-shadow:0 10px 30px rgba(0,0,0,.5);pointer-events:auto}
-h1{margin:0 0 8px;font-size:1.5rem;font-weight:600}
-p{margin:0 0 16px;font-size:.95rem;color:#bdc3c7}
-.xr-button{background:linear-gradient(135deg,var(--accent),#2980b9);color:var(--text);border:none;border-radius:10px;padding:14px 28px;font-size:1rem;font-weight:600;cursor:pointer;box-shadow:0 4px 15px rgba(52,152,219,.4)}
-.xr-button:hover{transform:translateY(-2px)}
-#status-bar{font-size:.85rem;color:#95a5a6;background:rgba(0,0,0,.4);padding:8px 16px;border-radius:20px;border:1px solid rgba(255,255,255,.08);pointer-events:auto}
-.hidden{display:none!important}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebXR AR Experience</title>
+    <style>
+        :root {--primary-color: #2c3e50;--accent-color: #3498db;--text-color: #ffffff;}
+        body {margin: 0;padding: 0;overflow: hidden;background-color: #000000;font-family: sans-serif;color: var(--text-color);user-select: none;}
+        #ui-container {position: fixed;top: 0;left: 0;width: 100%;height: 100%;display: flex;flex-direction: column;justify-content: space-between;align-items: center;pointer-events: none;box-sizing: border-box;padding: 24px;z-index: 100;}
+        .hud-panel {background: rgba(0, 0, 0, 0.65);backdrop-filter: blur(12px);border: 1px solid rgba(255, 255, 255, 0.15);border-radius: 16px;padding: 20px 32px;text-align: center;pointer-events: auto;}
+        h1 {margin: 0 0 8px 0;font-size: 1.5rem;}
+        p {margin: 0 0 16px 0;font-size: 0.95rem;color: #bdc3c7;}
+        .xr-button {background: linear-gradient(135deg, var(--accent-color), #2980b9);color: var(--text-color);border: none;border-radius: 10px;padding: 14px 28px;font-size: 1rem;font-weight: 600;cursor: pointer;outline: none;}
+        #status-bar {font-size: 0.85rem;color: #95a5a6;background: rgba(0, 0, 0, 0.4);padding: 8px 16px;border-radius: 20px;pointer-events: auto;}
+        .hidden {display: none !important;}
+    </style>
 </head>
 <body>
-<div id="ui-container">
-<div id="hud-panel" class="hud-panel">
-<h1>WebXR AR</h1>
-<p id="instruction">请在支持 WebXR 的设备上启动</p>
-<button id="xr-start-button" class="xr-button">启动 AR 体验</button>
-</div>
-<div id="status-bar">状态: 等待初始化</div>
-</div>
-<script src="./three.js/r128/three.min.js"></script>
-<script>
-const S={scene:null,camera:null,renderer:null,objs:[],ctrls:[],hands:[],grabbed:new Map(),bullets:[],score:0,scoreMesh:null,promptMesh:null,statusEl:null,panelEl:null,tmpV:new THREE.Vector3(),tmpV2:new THREE.Vector3()};
-const C={r:.08,grabDist:.2,bulletSpeed:8,bulletLife:2.5,colors:[0x3498db,0xe74c3c,0x2ecc71,0xf1c40f,0x9b59b6]};
-init();
-function init(){
-S.statusEl=document.getElementById('status-bar');S.panelEl=document.getElementById('hud-panel');
-S.scene=new THREE.Scene();
-S.camera=new THREE.PerspectiveCamera(70,innerWidth/innerHeight,.01,100);
-S.renderer=new THREE.WebGLRenderer({antialias:true,alpha:true,powerPreference:'high-performance'});
-S.renderer.setSize(innerWidth,innerHeight);S.renderer.setPixelRatio(Math.min(devicePixelRatio,2));
-S.renderer.xr.enabled=true;S.renderer.localClippingEnabled=false;
-document.body.appendChild(S.renderer.domElement);
-S.scene.add(new THREE.AmbientLight(0xffffff,.95));
-const dl=new THREE.DirectionalLight(0xffffff,1.1);dl.position.set(1,4,2);S.scene.add(dl);
-createTargets();
-setupControllers();
-setupUI();
-createScoreDisplay();
-createPrompt();
-addEventListener('resize',()=>{S.camera.aspect=innerWidth/innerHeight;S.camera.updateProjectionMatrix();S.renderer.setSize(innerWidth,innerHeight)});
-S.renderer.setAnimationLoop(loop);
-}
-function createTargets(){
-const geo=new THREE.SphereGeometry(C.r,24,24);
-for(let i=0;i<5;i++){
-const mat=new THREE.MeshStandardMaterial({color:C.colors[i%C.colors.length],roughness:.25,metalness:.35,depthWrite:true,depthTest:true});
-const m=new THREE.Mesh(geo,mat);
-const a=i/5*Math.PI*2;
-m.position.set(Math.cos(a)*.6,1.1+Math.sin(i)*.15,-.7-Math.sin(a)*.25);
-m.userData={interactive:true,hp:1,baseScale:1};
-S.scene.add(m);S.objs.push(m);
-}
-}
-function createScoreDisplay(){
-const c=document.createElement('canvas');c.width=256;c.height=64;
-const ctx=c.getContext('2d');
-S.scoreCanvas=c;S.scoreCtx=ctx;
-const tex=new THREE.CanvasTexture(c);
-const mat=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide});
-const mesh=new THREE.Mesh(new THREE.PlaneGeometry(.4,.1),mat);
-mesh.position.set(0,1.6,-1.2);
-S.scene.add(mesh);S.scoreMesh=mesh;
-updateScoreTex();
-}
-function updateScoreTex(){
-const ctx=S.scoreCtx,c=S.scoreCanvas;
-ctx.clearRect(0,0,c.width,c.height);
-ctx.fillStyle='rgba(0,0,0,.55)';ctx.fillRect(0,0,c.width,c.height);
-ctx.font='bold 36px sans-serif';ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';
-ctx.fillText('得分: '+S.score,c.width/2,c.height/2);
-S.scoreMesh.material.map.needsUpdate=true;
-}
-function createPrompt(){
-const c=document.createElement('canvas');c.width=512;c.height=128;
-const ctx=c.getContext('2d');
-ctx.fillStyle='rgba(0,0,0,.6)';ctx.fillRect(0,0,c.width,c.height);
-ctx.font='bold 42px sans-serif';ctx.fillStyle='#fff';ctx.textAlign='center';ctx.textBaseline='middle';
-ctx.fillText('请拿起手柄',c.width/2,c.height/2);
-const tex=new THREE.CanvasTexture(c);
-const mat=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthTest:true,depthWrite:false,side:THREE.DoubleSide});
-const mesh=new THREE.Mesh(new THREE.PlaneGeometry(.8,.2),mat);
-mesh.position.set(0,1.4,-1);
-mesh.visible=false;
-S.scene.add(mesh);S.promptMesh=mesh;
-}
-function setupControllers(){
-for(let i=0;i<2;i++){
-const ctrl=S.renderer.xr.getController(i);
-ctrl.addEventListener('selectstart',onSelectStart);
-ctrl.addEventListener('selectend',onSelectEnd);
-S.scene.add(ctrl);S.ctrls.push(ctrl);
-const marker=new THREE.Mesh(new THREE.SphereGeometry(.012,12,12),new THREE.MeshBasicMaterial({color:0xffffff}));
-ctrl.add(marker);
-const hand=S.renderer.xr.getHand(i);
-hand.addEventListener('pinchstart',onPinchStart);
-hand.addEventListener('pinchend',onPinchEnd);
-S.scene.add(hand);S.hands.push(hand);
-for(let j=0;j<25;j++){
-const jMesh=new THREE.Mesh(new THREE.SphereGeometry(.008,8,8),new THREE.MeshBasicMaterial({color:0xcccccc,depthWrite:true,depthTest:true,transparent:true,opacity:.85}));
-jMesh.visible=false;hand.add(jMesh);hand.userData['j'+j]=jMesh;
-}
-}
-}
-function setupUI(){
-const btn=document.getElementById('xr-start-button');
-if('xr' in navigator){
-navigator.xr.isSessionSupported('immersive-ar').then(ok=>{
-if(ok){btn.textContent='启动 AR 体验';btn.disabled=false;btn.onclick=requestSession;updateStatus('设备支持 WebXR AR')}
-else{updateStatus('不支持 Immersive AR');btn.disabled=true}
-}).catch(()=>updateStatus('XR 检测失败'))}
-else{updateStatus('不支持 WebXR');btn.disabled=true}
-}
-function requestSession(){
-navigator.xr.requestSession('immersive-ar',{requiredFeatures:['local-floor'],optionalFeatures:['hand-tracking','passthrough']}).then(s=>{
-S.renderer.xr.setSession(s);S.panelEl.classList.add('hidden');updateStatus('AR 运行中');
-s.addEventListener('end',()=>{S.panelEl.classList.remove('hidden');updateStatus('会话结束');S.grabbed.clear();S.bullets.forEach(b=>S.scene.remove(b.mesh));S.bullets.length=0})
-}).catch(e=>{console.error(e);updateStatus('AR 启动失败')})
-}
-function onSelectStart(e){
-const ctrl=e.target;
-const target=findClosest(ctrl.position,C.grabDist);
-if(target&&!S.grabbed.has(ctrl)){S.grabbed.set(ctrl,target);ctrl.attach(target);target.position.set(0,0,0);updateStatus('已抓取')}
-else fireBullet(ctrl);
-}
-function onSelectEnd(e){release(e.target)}
-function onPinchStart(e){
-const hand=e.target;const tip=hand.joints&&hand.joints['index-finger-tip'];
-if(tip){const target=findClosest(tip.position,C.grabDist);if(target&&!S.grabbed.has(hand)){S.grabbed.set(hand,target);hand.attach(target);target.position.set(0,0,0);updateStatus('手部捏取')}}
-}
-function onPinchEnd(e){release(e.target)}
-function fireBullet(ctrl){
-const geo=new THREE.SphereGeometry(.02,8,8);
-const mat=new THREE.MeshBasicMaterial({color:0xffee58});
-const mesh=new THREE.Mesh(geo,mat);
-ctrl.getWorldPosition(S.tmpV);mesh.position.copy(S.tmpV);
-const dir=new THREE.Vector3(0,0,-1).applyQuaternion(ctrl.quaternion);
-S.scene.add(mesh);
-S.bullets.push({mesh,vel:dir.multiplyScalar(C.bulletSpeed),life:C.bulletLife});
-updateStatus('发射');
-}
-function findClosest(pos,maxD){
-let closest=null,minD=maxD;
-for(const o of S.objs){
-if(!o.visible||o.userData.hp<=0)continue;
-o.getWorldPosition(S.tmpV2);
-const d=pos.distanceTo(S.tmpV2);
-if(d<minD){minD=d;closest=o}
-}
-return closest;
-}
-function release(src){
-if(S.grabbed.has(src)){const o=S.grabbed.get(src);S.scene.attach(o);S.grabbed.delete(src);updateStatus('已释放')}
-}
-function updateStatus(m){if(S.statusEl)S.statusEl.textContent='状态: '+m}
-function loop(t,frame){
-const dt=Math.min(S.renderer.xr.isPresenting?.033||.016,0.05);
-let hasCtrl=false;
-for(const c of S.ctrls){if(c.visible||(c.children.length&&c.matrixWorld))hasCtrl=true}
-if(S.promptMesh){
-S.promptMesh.visible=!hasCtrl&&S.renderer.xr.isPresenting;
-if(S.promptMesh.visible){S.camera.getWorldPosition(S.tmpV);S.promptMesh.position.copy(S.tmpV);S.tmpV2.set(0,0,-1).applyQuaternion(S.camera.quaternion);S.promptMesh.position.addScaledVector(S.tmpV2,1.1);S.promptMesh.quaternion.copy(S.camera.quaternion)}
-}
-if(S.scoreMesh&&S.renderer.xr.isPresenting){S.camera.getWorldPosition(S.tmpV);S.scoreMesh.position.copy(S.tmpV);S.tmpV2.set(0,.25,-1.1).applyQuaternion(S.camera.quaternion);S.scoreMesh.position.add(S.tmpV2);S.scoreMesh.quaternion.copy(S.camera.quaternion)}
-for(const hand of S.hands){
-if(!hand.joints)continue;
-let idx=0;
-for(const name in hand.joints){
-const j=hand.joints[name];const jm=hand.userData['j'+idx];
-if(jm&&j){jm.visible=true;jm.position.copy(j.position);jm.quaternion.copy(j.quaternion)}
-idx++;if(idx>24)break;
-}
-}
-for(let i=S.bullets.length-1;i>=0;i--){
-const b=S.bullets[i];
-b.mesh.position.addScaledVector(b.vel,dt);
-b.life-=dt;
-let hit=false;
-for(const o of S.objs){
-if(!o.visible||o.userData.hp<=0)continue;
-o.getWorldPosition(S.tmpV);
-if(b.mesh.position.distanceTo(S.tmpV)<C.r+.03){
-o.userData.hp=0;o.visible=false;S.score+=10;updateScoreTex();hit=true;updateStatus('命中 +10');
-setTimeout(()=>{o.userData.hp=1;o.visible=true;o.scale.setScalar(1)},2500);
-break;
-}
-}
-if(hit||b.life<=0){S.scene.remove(b.mesh);S.bullets.splice(i,1)}
-}
-S.renderer.render(S.scene,S.camera);
-}
-</script>
+    <div id="ui-container">
+        <div id="hud-panel" class="hud-panel">
+            <h1>WebXR AR 射击</h1>
+            <p id="instruction">请在 Meta Quest 浏览器中启动 AR 体验</p>
+            <button id="xr-start-button" class="xr-button">启动 AR 体验</button>
+        </div>
+        <div id="status-bar">状态: 等待初始化</div>
+    </div>
+    <script src="./three.js/r128/three.min.js"></script>
+    <script>
+        const AppState = { scene: null, camera: null, renderer: null, targets: [], bullets: [], controllers: [], score: 0, scoreMesh: null, warningMesh: null };
+        const Config = { sphereRadius: 0.08, colors: [0x3498db, 0xe74c3c, 0x2ecc71] };
+        initApplication();
+        function initApplication() {
+            AppState.statusElement = document.getElementById('status-bar');
+            AppState.panelElement = document.getElementById('hud-panel');
+            AppState.scene = new THREE.Scene();
+            AppState.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
+            AppState.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+            AppState.renderer.setSize(window.innerWidth, window.innerHeight);
+            AppState.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            AppState.renderer.xr.enabled = true;
+            document.body.appendChild(AppState.renderer.domElement);
+            setupLighting();
+            createEnvironment();
+            setupXRControllers();
+            setupXRSessionUI();
+            window.addEventListener('resize', onWindowResize, false);
+        }
+        function setupLighting() {
+            AppState.scene.add(new THREE.AmbientLight(0xffffff, 0.9));
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            directionalLight.position.set(1, 4, 2);
+            AppState.scene.add(directionalLight);
+        }
+        function createEnvironment() {
+            const geometry = new THREE.SphereGeometry(Config.sphereRadius, 32, 32);
+            for (let i = 0; i < 3; i++) {
+                const material = new THREE.MeshStandardMaterial({ color: Config.colors[i], roughness: 0.2, metalness: 0.3 });
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.set((i - 1) * 0.4, 1.2, -1.2);
+                AppState.scene.add(mesh);
+                AppState.targets.push(mesh);
+            }
+            AppState.warningMesh = createTextSprite("请拿起手柄");
+            AppState.warningMesh.position.set(0, 1.6, -1.0);
+            AppState.warningMesh.visible = false;
+            AppState.scene.add(AppState.warningMesh);
+            AppState.scoreMesh = createTextSprite("得分: 0");
+            AppState.scoreMesh.position.set(0, 2.0, -1.2);
+            AppState.scene.add(AppState.scoreMesh);
+        }
+        function createTextSprite(message) {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 512; canvas.height = 128;
+            context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = 'Bold 48px sans-serif';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(message, canvas.width / 2, canvas.height / 2);
+            const texture = new THREE.CanvasTexture(canvas);
+            const material = new THREE.SpriteMaterial({ map: texture, depthTest: false, depthWrite: false });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(0.6, 0.15, 1);
+            return sprite;
+        }
+        function updateScoreTexture() {
+            const canvas = AppState.scoreMesh.material.map.image;
+            const context = canvas.getContext('2d');
+            context.clearRect(0, 0, canvas.width, canvas.height);
+            context.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.font = 'Bold 48px sans-serif';
+            context.fillStyle = 'white';
+            context.textAlign = 'center';
+            context.textBaseline = 'middle';
+            context.fillText(`得分: ${AppState.score}`, canvas.width / 2, canvas.height / 2);
+            AppState.scoreMesh.material.map.needsUpdate = true;
+        }
+        function setupXRControllers() {
+            for (let i = 0; i < 2; i++) {
+                const controller = AppState.renderer.xr.getController(i);
+                controller.addEventListener('selectstart', onControllerSelectStart);
+                AppState.scene.add(controller);
+                AppState.controllers.push(controller);
+                const marker = new THREE.Mesh(new THREE.SphereGeometry(0.015, 16, 16), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+                controller.add(marker);
+            }
+        }
+        function setupXRSessionUI() {
+            const startButton = document.getElementById('xr-start-button');
+            if ('xr' in navigator) {
+                navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
+                    if (supported) {
+                        startButton.textContent = '启动 AR 体验';
+                        startButton.disabled = false;
+                        startButton.addEventListener('click', requestARSession);
+                    } else {
+                        startButton.disabled = true;
+                    }
+                });
+            }
+        }
+        function requestARSession() {
+            const sessionInit = { requiredFeatures: ['local-floor'], optionalFeatures: ['hand-tracking', 'passthrough', 'hit-test'] };
+            navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted);
+        }
+        function onSessionStarted(session) {
+            AppState.renderer.xr.setSession(session);
+            AppState.panelElement.classList.add('hidden');
+            session.addEventListener('end', () => { AppState.panelElement.classList.remove('hidden'); });
+        }
+        function onControllerSelectStart(event) {
+            const controller = event.target;
+            const bulletGeo = new THREE.SphereGeometry(0.02, 16, 16);
+            const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+            const bullet = new THREE.Mesh(bulletGeo, bulletMat);
+            bullet.position.copy(controller.position);
+            const quaternion = new THREE.Quaternion();
+            controller.getWorldQuaternion(quaternion);
+            const direction = new THREE.Vector3(0, 0, -1).applyQuaternion(quaternion);
+            bullet.userData = { velocity: direction.multiplyScalar(5.0) };
+            AppState.scene.add(bullet);
+            AppState.bullets.push(bullet);
+        }
+        function onWindowResize() {
+            AppState.camera.aspect = window.innerWidth / window.innerHeight;
+            AppState.camera.updateProjectionMatrix();
+            AppState.renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        const clock = new THREE.Clock();
+        AppState.renderer.setAnimationLoop(() => {
+            const delta = clock.getDelta();
+            let controllersConnected = false;
+            AppState.controllers.forEach(controller => {
+                const inputSource = controller.userData.inputSource;
+                if (controller.visible || controller.children.length > 0) { controllersConnected = true; }
+            });
+            if (AppState.warningMesh) {
+                AppState.warningMesh.visible = !controllersConnected && AppState.renderer.xr.isPresenting;
+            }
+            for (let i = AppState.bullets.length - 1; i >= 0; i--) {
+                const bullet = AppState.bullets[i];
+                bullet.position.addScaledVector(bullet.userData.velocity, delta);
+                for (let j = 0; j < AppState.targets.length; j++) {
+                    const target = AppState.targets[j];
+                    if (bullet.position.distanceTo(target.position) < Config.sphereRadius + 0.02) {
+                        AppState.score += 10;
+                        updateScoreTexture();
+                        target.position.set((Math.random() - 0.5) * 0.8, 1.0 + Math.random() * 0.5, -0.8 - Math.random() * 0.8);
+                        AppState.scene.remove(bullet);
+                        AppState.bullets.splice(i, 1);
+                        break;
+                    }
+                }
+            }
+            AppState.renderer.render(AppState.scene, AppState.camera);
+        });
+    </script>
 </body>
 </html>
