@@ -3,210 +3,339 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebXR Passthrough & Hand Interaction</title>
+    <title>WebXR AR Environment</title>
     <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --success-color: #2ecc71;
+            --danger-color: #e74c3c;
+            --text-color: #ffffff;
+        }
+
         body {
             margin: 0;
             padding: 0;
             overflow: hidden;
-            background-color: #000;
-            font-family: sans-serif;
+            background-color: #000000;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            color: var(--text-color);
+            user-select: none;
+            -webkit-user-select: none;
         }
-        #overlay {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            z-index: 10;
+
+        #ui-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            pointer-events: none;
+            box-sizing: border-box;
+            padding: 24px;
+            z-index: 100;
         }
-        button {
-            padding: 12px 24px;
-            font-size: 16px;
-            background-color: #4CAF50;
-            color: white;
+
+        .hud-panel {
+            background: rgba(0, 0, 0, 0.65);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 16px;
+            padding: 20px 32px;
+            text-align: center;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+            pointer-events: auto;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        h1 {
+            margin: 0 0 8px 0;
+            font-size: 1.5rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        p {
+            margin: 0 0 16px 0;
+            font-size: 0.95rem;
+            color: #bdc3c7;
+        }
+
+        .xr-button {
+            background: linear-gradient(135deg, var(--accent-color), #2980b9);
+            color: var(--text-color);
             border: none;
-            border-radius: 8px;
+            border-radius: 10px;
+            padding: 14px 28px;
+            font-size: 1rem;
+            font-weight: 600;
             cursor: pointer;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            box-shadow: 0 4px 15px rgba(52, 152, 219, 0.4);
+            transition: transform 0.2s, box-shadow 0.2s;
+            outline: none;
         }
-        button:hover {
-            background-color: #45a049;
+
+        .xr-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(52, 152, 219, 0.6);
+        }
+
+        .xr-button:active {
+            transform: translateY(1px);
+        }
+
+        #status-bar {
+            font-size: 0.85rem;
+            color: #95a5a6;
+            background: rgba(0, 0, 0, 0.4);
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            pointer-events: auto;
+        }
+
+        .hidden {
+            display: none !important;
         }
     </style>
 </head>
 <body>
 
-    <div id="overlay">
-        <button id="ar-button">启动 WebXR AR 体验</button>
+    <div id="ui-container">
+        <div id="hud-panel" class="hud-panel">
+            <h1>WebXR AR Experience</h1>
+            <p id="instruction">请在 Meta Quest 浏览器中启动 AR 体验</p>
+            <button id="xr-start-button" class="xr-button">启动 AR 体验</button>
+        </div>
+        <div id="status-bar">状态: 等待初始化</div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/webxr/XRControllerModelFactory.js"></script>
+    <script src="./three.js/r128/three.min.js"></script>
 
     <script>
-        let camera, scene, renderer;
-        let sphere, sphereOriginalPosition;
-        let controller1, controller2;
-        let hand1, hand2;
-        let grabbedObject = null; // 当前被抓取的物体
+        const AppState = {
+            scene: null,
+            camera: null,
+            renderer: null,
+            interactiveObjects: [],
+            controllers: [],
+            hands: [],
+            grabbedMap: new Map(),
+            statusElement: null,
+            panelElement: null
+        };
 
-        init();
+        const Config = {
+            sphereRadius: 0.08,
+            grabDistanceThreshold: 0.2,
+            colors: [0x3498db, 0xe74c3c, 0x2ecc71]
+        };
 
-        function init() {
-            // 1. 创建场景
-            scene = new THREE.Scene();
+        initApplication();
 
-            // 2. 创建相机
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 20);
+        function initApplication() {
+            AppState.statusElement = document.getElementById('status-bar');
+            AppState.panelElement = document.getElementById('hud-panel');
 
-            // 3. 创建渲染器 (必须启用 xr 和 alpha:true 以实现透视背景)
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-            renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.xr.enabled = true; // 开启 WebXR 支持
-            document.body.appendChild(renderer.domElement);
+            AppState.scene = new THREE.Scene();
+            AppState.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 50);
 
-            // 4. 添加光源
-            const ambientLight = new THREE.AmbientLight(0xffffff, 1.0);
-            scene.add(ambientLight);
+            AppState.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
+            AppState.renderer.setSize(window.innerWidth, window.innerHeight);
+            AppState.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            AppState.renderer.xr.enabled = true;
+            document.body.appendChild(AppState.renderer.domElement);
 
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-            directionalLight.position.set(0, 5, 2);
-            scene.add(directionalLight);
+            setupLighting();
+            createInteractiveObjects();
+            setupXRControllers();
+            setupXRSessionUI();
 
-            // 5. 创建一个可交互的球体 (放在正前方 1 米处)
-            const geometry = new THREE.SphereGeometry(0.1, 32, 32); // 半径 10 厘米
-            const material = new THREE.MeshStandardMaterial({ 
-                color: 0xff3333, 
-                roughness: 0.3,
-                metalness: 0.1 
-            });
-            sphere = new THREE.Mesh(geometry, material);
-            sphere.position.set(0, 1.2, -0.8); // 眼睛前方、略微偏下
-            scene.add(sphere);
+            window.addEventListener('resize', onWindowResize, false);
+        }
+
+        function setupLighting() {
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
+            AppState.scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            directionalLight.position.set(1, 4, 2);
+            AppState.scene.add(directionalLight);
+        }
+
+        function createInteractiveObjects() {
+            const geometry = new THREE.SphereGeometry(Config.sphereRadius, 32, 32);
             
-            // 记录初始位置，方便后续重置或计算
-            sphereOriginalPosition = sphere.position.clone();
+            for (let i = 0; i < 3; i++) {
+                const material = new THREE.MeshStandardMaterial({
+                    color: Config.colors[i],
+                    roughness: 0.2,
+                    metalness: 0.3
+                });
+                
+                const mesh = new THREE.Mesh(geometry, material);
+                mesh.position.set((i - 1) * 0.25, 1.2, -0.8);
+                
+                mesh.userData = {
+                    isInteractive: true,
+                    originalPosition: mesh.position.clone()
+                };
 
-            // 6. 设置 WebXR 控制器与手部追踪
-            setupControllers();
+                AppState.scene.add(mesh);
+                AppState.interactiveObjects.push(mesh);
+            }
+        }
 
-            // 7. AR 按钮逻辑
-            const arButton = document.getElementById('ar-button');
+        function setupXRControllers() {
+            for (let i = 0; i < 2; i++) {
+                const controller = AppState.renderer.xr.getController(i);
+                controller.addEventListener('selectstart', onControllerSelectStart);
+                controller.addEventListener('selectend', onControllerSelectEnd);
+                AppState.scene.add(controller);
+                AppState.controllers.push(controller);
+
+                // 使用内置简单小球代表手柄位置，避免加载外部模型报错
+                const controllerMarker = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.015, 16, 16),
+                    new THREE.MeshBasicMaterial({ color: 0xffffff })
+                );
+                controller.add(controllerMarker);
+
+                const hand = AppState.renderer.xr.getHand(i);
+                hand.addEventListener('pinchstart', onHandPinchStart);
+                hand.addEventListener('pinchend', onHandPinchEnd);
+                AppState.scene.add(hand);
+                AppState.hands.push(hand);
+            }
+        }
+
+        function setupXRSessionUI() {
+            const startButton = document.getElementById('xr-start-button');
+
             if ('xr' in navigator) {
                 navigator.xr.isSessionSupported('immersive-ar').then((supported) => {
                     if (supported) {
-                        arButton.addEventListener('click', on激发ARSession);
+                        startButton.textContent = '启动 AR 体验';
+                        startButton.disabled = false;
+                        startButton.addEventListener('click', requestARSession);
+                        updateStatus('设备支持 WebXR AR 模式');
                     } else {
-                        arButton.textContent = '当前设备不支持 Immersive AR';
-                        arButton.disabled = true;
+                        updateStatus('当前设备不支持 Immersive AR 模式');
+                        startButton.disabled = true;
                     }
+                }).catch(() => {
+                    updateStatus('XR 权限检测失败');
                 });
             } else {
-                arButton.textContent = '浏览器不支持 WebXR';
-                arButton.disabled = true;
+                updateStatus('当前浏览器不支持 WebXR API');
+                startButton.disabled = true;
             }
-
-            window.addEventListener('resize', onWindowResize);
         }
 
-        function on激发ARSession() {
-            // 请求 AR 会话，启用环境光估计和手部输入
+        function requestARSession() {
             const sessionInit = {
-                requiredFeatures: ['hit-test', 'local-floor'],
-                optionalFeatures: ['hand-tracking', 'passthrough', 'layers']
+                requiredFeatures: ['local-floor'],
+                optionalFeatures: ['hand-tracking', 'passthrough', 'hit-test']
             };
 
-            navigator.xr.requestSession('immersive-ar', sessionInit).then((session) => {
-                renderer.xr.setSession(session);
-                document.getElementById('overlay').style.display = 'none'; // 隐藏进入按钮
-
-                session.addEventListener('end', () => {
-                    document.getElementById('overlay').style.display = 'block';
-                });
+            navigator.xr.requestSession('immersive-ar', sessionInit).then(onSessionStarted).catch((err) => {
+                console.error(err);
+                updateStatus('AR 会话请求被拒绝或失败');
             });
         }
 
-        function setupControllers() {
-            // 控制器 1 (右手柄 / 右手)
-            controller1 = renderer.xr.getController(0);
-            controller1.addEventListener('selectstart', onSelectStart);
-            controller1.addEventListener('selectend', onSelectEnd);
-            scene.add(controller1);
+        function onSessionStarted(session) {
+            AppState.renderer.xr.setSession(session);
+            AppState.panelElement.classList.add('hidden');
+            updateStatus('AR 会话运行中');
 
-            // 控制器 2 (左手柄 / 左手)
-            controller2 = renderer.xr.getController(1);
-            controller2.addEventListener('selectstart', onSelectStart);
-            controller2.addEventListener('selectend', onSelectEnd);
-            scene.add(controller2);
-
-            // 手部追踪支持 (Meta Quest Hand Tracking)
-            hand1 = renderer.xr.getHand(0);
-            hand1.addEventListener('pinchstart', onPinchStart);
-            hand1.addEventListener('pinchend', onPinchEnd);
-            scene.add(hand1);
-
-            hand2 = renderer.xr.getHand(1);
-            hand2.addEventListener('pinchstart', onPinchStart);
-            hand2.addEventListener('pinchend', onPinchEnd);
-            scene.add(hand2);
+            session.addEventListener('end', () => {
+                AppState.panelElement.classList.remove('hidden');
+                updateStatus('会话已结束');
+                AppState.grabbedMap.clear();
+            });
         }
 
-        // 手柄触发（按下扳机键）
-        function onSelectStart(event) {
+        function onControllerSelectStart(event) {
             const controller = event.target;
-            checkIntersectionAndGrab(controller);
-        }
-
-        // 手柄释放（松开扳机键）
-        function onSelectEnd(event) {
-            if (grabbedObject) {
-                // 如果当前物体被该控制器抓取，则释放
-                scene.attach(grabbedObject); // 放回世界场景
-                grabbedObject = null;
+            const targetObject = findClosestInteractiveObject(controller.position, Config.grabDistanceThreshold);
+            
+            if (targetObject && !AppState.grabbedMap.has(controller)) {
+                AppState.grabbedMap.set(controller, targetObject);
+                controller.add(targetObject);
+                targetObject.position.set(0, 0, 0);
+                updateStatus('已抓取物体');
             }
         }
 
-        // 手部捏合开始（大拇指和食指捏合模拟抓取）
-        function onPinchStart(event) {
+        function onControllerSelectEnd(event) {
+            releaseObject(event.target);
+        }
+
+        function onHandPinchStart(event) {
             const hand = event.target;
-            // 获取食指尖端位置用于检测
             const indexTip = hand.joints['index-finger-tip'];
+            
             if (indexTip) {
-                // 计算指尖与球体的距离
-                const distance = indexTip.position.distanceTo(sphere.position);
-                if (distance < 0.15 && !grabbedObject) {
-                    grabbedObject = sphere;
-                    hand.add(grabbedObject); // 将球体绑定到手上
+                const targetObject = findClosestInteractiveObject(indexTip.position, Config.grabDistanceThreshold);
+                if (targetObject && !AppState.grabbedMap.has(hand)) {
+                    AppState.grabbedMap.set(hand, targetObject);
+                    hand.add(targetObject);
+                    targetObject.position.set(0, 0, 0);
+                    updateStatus('手部已捏取物体');
                 }
             }
         }
 
-        // 手部捏合结束
-        function onPinchEnd(event) {
-            if (grabbedObject) {
-                scene.attach(grabbedObject);
-                grabbedObject = null;
+        function onHandPinchEnd(event) {
+            releaseObject(event.target);
+        }
+
+        function findClosestInteractiveObject(sourcePosition, maxDistance) {
+            let closest = null;
+            let minDistance = maxDistance;
+
+            for (const obj of AppState.interactiveObjects) {
+                const worldPos = new THREE.Vector3();
+                obj.getWorldPosition(worldPos);
+                const distance = sourcePosition.distanceTo(worldPos);
+                
+                if (distance < minDistance) {
+                    minDistance = distance;
+                    closest = obj;
+                }
+            }
+            return closest;
+        }
+
+        function releaseObject(source) {
+            if (AppState.grabbedMap.has(source)) {
+                const obj = AppState.grabbedMap.get(source);
+                AppState.scene.attach(obj);
+                AppState.grabbedMap.delete(source);
+                updateStatus('已释放物体');
             }
         }
 
-        // 简单的距离检测抓取逻辑（针对标准手柄激光或直接触碰）
-        function checkIntersectionAndGrab(source) {
-            const distance = source.position.distanceTo(sphere.position);
-            if (distance < 0.2 && !grabbedObject) {
-                grabbedObject = sphere;
-                source.add(grabbedObject); // 绑定到手柄上，实现拿起效果
+        function updateStatus(message) {
+            if (AppState.statusElement) {
+                AppState.statusElement.textContent = `状态: ${message}`;
             }
         }
 
         function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
+            AppState.camera.aspect = window.innerWidth / window.innerHeight;
+            AppState.camera.updateProjectionMatrix();
+            AppState.renderer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        // 渲染循环
-        renderer.setAnimationLoop(() => {
-            renderer.render(scene, camera);
+        AppState.renderer.setAnimationLoop(() => {
+            AppState.renderer.render(AppState.scene, AppState.camera);
         });
     </script>
 </body>
